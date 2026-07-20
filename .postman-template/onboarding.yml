@@ -1,0 +1,39 @@
+version: 1
+
+spec:
+  source: repo
+  path: api/openapi.yaml
+
+postman:
+  region: us
+  orgMode: true
+
+service:
+  name: adaptavist-access-provisioning-api
+  displayName: Adaptavist Access Provisioning API
+  domain: partner-enablement
+  domainCode: ADPT
+  governanceGroup: Adaptavist Provisions Demo
+  requesterEmail: platform-api-owner@example.com
+
+repoSync:
+  generateCiWorkflow: false
+  systemEnvMap: {}
+  environments:
+    local:
+      baseUrl: http://127.0.0.1:4010
+
+ci:
+  enabled: true
+  baseUrl: http://127.0.0.1:4010
+  healthUrl: http://127.0.0.1:4010/v1/health
+  startCommand: ./scripts/start-service.sh
+  stopCommand: ./scripts/stop-service.sh
+  contractFolder: v1
+  smokeFolder: v1
+
+governance:
+  breakingChangeMode: pr-native
+
+smoke:
+  runEnvironments: []

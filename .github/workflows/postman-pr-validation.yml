@@ -1,0 +1,257 @@
+name: Postman PR Validation
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'api/**'
+      - '.postman-template/onboarding.yml'
+      - '.github/workflows/postman-pr-validation.yml'
+  workflow_dispatch:
+    inputs:
+      spec_path:
+        description: Optional OpenAPI spec path to validate.
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    env:
+      POSTMAN_REGION: ${{ vars.POSTMAN_REGION || 'us' }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - id: spec
+        name: Resolve changed OpenAPI spec
+        shell: bash
+        env:
+          INPUT_SPEC_PATH: ${{ inputs.spec_path || '' }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          spec_path="$INPUT_SPEC_PATH"
+
+          if [ -z "$spec_path" ] && [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            git fetch --no-tags --depth=1 origin "$BASE_REF" >/dev/null 2>&1 || true
+            spec_path="$(git diff --name-only "origin/${BASE_REF}"...HEAD -- \
+              ':(glob)api/**/*.yaml' \
+              ':(glob)api/**/*.yml' \
+              ':(glob)api/**/*.json' | head -n 1)"
+          fi
+
+          if [ -z "$spec_path" ]; then
+            spec_path="$(find api -type f \( -name '*.yaml' -o -name '*.yml' -o -name '*.json' \) 2>/dev/null | sort | head -n 1 || true)"
+          fi
+
+          if [ -n "$spec_path" ] && [ ! -f "$spec_path" ]; then
+            echo "::error::Spec path $spec_path does not exist"
+            exit 1
+          fi
+
+          echo "spec_path=$spec_path" >> "$GITHUB_OUTPUT"
+
+      - name: Install openapi-changes
+        if: steps.spec.outputs.spec_path != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="0.2.7"
+          asset="openapi-changes_${version}_linux_x86_64.tar.gz"
+          checksum="333742ea369c90437fbda47a814cf2393cb65eaa3867268a4c86281e74f614bf"
+          download_dir="$RUNNER_TEMP/openapi-changes-download"
+          extract_dir="$RUNNER_TEMP/openapi-changes-extract"
+          bin_dir="$RUNNER_TEMP/openapi-changes-bin"
+          archive="$download_dir/$asset"
+          mkdir -p "$download_dir" "$extract_dir" "$bin_dir"
+          curl -fsSL "https://github.com/pb33f/openapi-changes/releases/download/v${version}/${asset}" -o "$archive"
+          echo "${checksum}  ${archive}" | sha256sum -c -
+          tar -xzf "$archive" -C "$extract_dir"
+          bin="$(find "$extract_dir" -type f -name openapi-changes | head -n 1)"
+          cp "$bin" "$bin_dir/openapi-changes"
+          chmod +x "$bin_dir/openapi-changes"
+          echo "$bin_dir" >> "$GITHUB_PATH"
+
+      - id: breaking
+        name: Run breaking-change check
+        if: steps.spec.outputs.spec_path != ''
+        shell: bash
+        env:
+          SPEC_PATH: ${{ steps.spec.outputs.spec_path }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set +e
+          summary_file="openapi-changes-summary.md"
+          previous=""
+
+          if [ -n "$BASE_REF" ]; then
+            target_ref="origin/${BASE_REF}"
+            git fetch --no-tags --depth=1 origin "$BASE_REF" >/dev/null 2>&1 || true
+            if git cat-file -e "${target_ref}:${SPEC_PATH}" 2>/dev/null; then
+              previous="${target_ref}:${SPEC_PATH}"
+            fi
+          fi
+
+          if [ -z "$previous" ]; then
+            echo "status=skipped" >> "$GITHUB_OUTPUT"
+            echo "# OpenAPI Breaking Change Check" > "$summary_file"
+            echo >> "$summary_file"
+            echo "Status: skipped - no baseline spec exists on the target branch yet." >> "$summary_file"
+            exit 0
+          fi
+
+          openapi-changes summary --markdown --no-logo --no-color "$previous" "$SPEC_PATH" > "$summary_file" 2> openapi-changes.log
+          exit_code=$?
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          if [ "$exit_code" -eq 0 ]; then
+            echo "status=passed" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=failed" >> "$GITHUB_OUTPUT"
+          fi
+          exit 0
+
+      - id: lint
+        name: Run Postman governance lint
+        if: steps.spec.outputs.spec_path != ''
+        shell: bash
+        env:
+          POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
+          SPEC_PATH: ${{ steps.spec.outputs.spec_path }}
+        run: |
+          set +e
+          if [ -z "$POSTMAN_API_KEY" ]; then
+            echo "outcome=skipped" >> "$GITHUB_OUTPUT"
+            echo '{"message":"POSTMAN_API_KEY is not configured; governance lint skipped."}' > lint-results.json
+            exit 0
+          fi
+
+          curl -fsSL "https://dl-cli.pstmn.io/install/unix.sh" | sh
+          export PATH="$HOME/.postman/cli:$PATH"
+
+          if [ "$POSTMAN_REGION" = "eu" ]; then
+            postman login --with-api-key "$POSTMAN_API_KEY" --region eu >/dev/null 2>&1
+          else
+            postman login --with-api-key "$POSTMAN_API_KEY" >/dev/null 2>&1
+          fi
+
+          postman spec lint "$SPEC_PATH" --fail-severity WARNING --output JSON > lint-results.json 2> lint-stderr.log
+          exit_code=$?
+          cat lint-stderr.log >&2
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          if [ "$exit_code" -eq 0 ]; then
+            echo "outcome=success" >> "$GITHUB_OUTPUT"
+          else
+            echo "outcome=failure" >> "$GITHUB_OUTPUT"
+          fi
+          exit 0
+
+      - name: Write validation summary
+        if: always()
+        shell: bash
+        env:
+          SPEC_PATH: ${{ steps.spec.outputs.spec_path }}
+          BREAKING_STATUS: ${{ steps.breaking.outputs.status }}
+          LINT_OUTCOME: ${{ steps.lint.outputs.outcome }}
+        run: |
+          {
+            echo "# Postman PR Validation"
+            echo
+            if [ -z "$SPEC_PATH" ]; then
+              echo "No canonical OpenAPI spec was found in this change."
+            else
+              echo "Spec: \`$SPEC_PATH\`"
+              echo
+              echo "| Gate | Status |"
+              echo "| --- | --- |"
+              echo "| Breaking changes | ${BREAKING_STATUS:-not-run} |"
+              echo "| Governance lint | ${LINT_OUTCOME:-not-run} |"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Post validation results as PR comment
+        if: always() && github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: actions/github-script@v9
+        env:
+          SPEC_PATH: ${{ steps.spec.outputs.spec_path }}
+          BREAKING_STATUS: ${{ steps.breaking.outputs.status }}
+          LINT_OUTCOME: ${{ steps.lint.outputs.outcome }}
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- postman-pr-validation-report -->';
+            const specPath = process.env.SPEC_PATH || '(none)';
+            const breaking = fs.existsSync('openapi-changes-summary.md')
+              ? fs.readFileSync('openapi-changes-summary.md', 'utf8').slice(0, 20000)
+              : 'No breaking-change summary was produced.';
+            const lint = fs.existsSync('lint-results.json')
+              ? fs.readFileSync('lint-results.json', 'utf8').slice(0, 12000)
+              : 'No lint results were produced.';
+            const body = [
+              marker,
+              '# Postman PR Validation Report',
+              '',
+              `Spec: \`${specPath}\``,
+              '',
+              `Breaking changes: **${process.env.BREAKING_STATUS || 'not-run'}**`,
+              `Governance: **${process.env.LINT_OUTCOME || 'not-run'}**`,
+              '',
+              '<details><summary>Breaking-change details</summary>',
+              '',
+              breaking,
+              '',
+              '</details>',
+              '',
+              '<details><summary>Governance JSON</summary>',
+              '',
+              '```json',
+              lint,
+              '```',
+              '',
+              '</details>'
+            ].join('\n');
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 100
+            });
+            const existing = comments.find((comment) => comment.user?.type === 'Bot' && comment.body?.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number, body });
+            }
+
+      - name: Enforce governance gate
+        if: steps.lint.outputs.outcome == 'failure'
+        run: |
+          echo "::error::Postman governance check failed"
+          exit 1
+
+      - name: Enforce breaking-change gate
+        if: steps.breaking.outputs.status == 'failed'
+        run: |
+          echo "::error::OpenAPI breaking-change check failed"
+          exit 1
+
+      - name: Upload validation artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: postman-pr-validation
+          if-no-files-found: ignore
+          path: |
+            lint-results.json
+            lint-stderr.log
+            openapi-changes-summary.md
+            openapi-changes.log

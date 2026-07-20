@@ -1,0 +1,289 @@
+name: Postman CI
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'scripts/**'
+      - 'test/**'
+      - '.postman/**'
+      - 'postman/**'
+      - 'api/**'
+      - '.postman-template/onboarding.yml'
+      - 'package.json'
+      - '.github/workflows/postman-ci.yml'
+  workflow_dispatch:
+    inputs:
+      run_smoke:
+        description: Run generated Smoke collection. Contract always runs.
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-contract:
+    runs-on: ubuntu-latest
+    env:
+      RUN_SMOKE: ${{ github.event.inputs.run_smoke || vars.POSTMAN_RUN_SMOKE || 'false' }}
+      POSTMAN_REGION_OVERRIDE: ${{ vars.POSTMAN_REGION }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Run service unit tests
+        run: npm test
+
+      - id: config
+        name: Load CI config
+        shell: bash
+        run: |
+          ruby <<'RUBY'
+          require 'yaml'
+
+          def output(name, value)
+            File.open(ENV.fetch('GITHUB_OUTPUT'), 'a') do |file|
+              file.puts("#{name}=#{String(value).gsub("\n", '%0A')}")
+            end
+          end
+
+          config = YAML.load_file('.postman-template/onboarding.yml') || {}
+          ci = config['ci'].is_a?(Hash) ? config['ci'] : {}
+          postman = config['postman'].is_a?(Hash) ? config['postman'] : {}
+          postman_region = String(ENV['POSTMAN_REGION_OVERRIDE'].to_s.strip.empty? ? postman['region'] : ENV['POSTMAN_REGION_OVERRIDE']).strip.downcase
+          postman_region = 'us' if postman_region.empty?
+
+          output('postman_region', postman_region)
+          output('ci_base_url', ci['baseUrl'].to_s.strip.empty? ? 'http://127.0.0.1:4010' : ci['baseUrl'].to_s.strip)
+          output('ci_health_url', ci['healthUrl'].to_s.strip.empty? ? 'http://127.0.0.1:4010/v1/health' : ci['healthUrl'].to_s.strip)
+          output('ci_start_command', ci['startCommand'].to_s.strip.empty? ? './scripts/start-service.sh' : ci['startCommand'].to_s.strip)
+          output('ci_stop_command', ci['stopCommand'].to_s.strip.empty? ? './scripts/stop-service.sh' : ci['stopCommand'].to_s.strip)
+          output('ci_contract_folder', ci['contractFolder'].to_s.strip)
+          output('ci_smoke_folder', ci['smokeFolder'].to_s.strip)
+          RUBY
+
+      - id: resources
+        name: Resolve Postman collections
+        shell: bash
+        env:
+          POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
+        run: |
+          ruby <<'RUBY'
+          require 'yaml'
+
+          def output(name, value)
+            File.open(ENV.fetch('GITHUB_OUTPUT'), 'a') do |file|
+              file.puts("#{name}=#{String(value).gsub("\n", '%0A')}")
+            end
+          end
+
+          unless File.exist?('.postman/resources.yaml')
+            output('status', 'skipped')
+            output('reason', 'Postman resources have not been generated yet. Run Postman Onboarding first and let it commit generated artifacts to main.')
+            exit 0
+          end
+
+          if ENV['POSTMAN_API_KEY'].to_s.empty?
+            output('status', 'skipped')
+            output('reason', 'POSTMAN_API_KEY is not configured.')
+            exit 0
+          end
+
+          resources = YAML.load_file('.postman/resources.yaml') || {}
+          canonical = resources['canonical'].is_a?(Hash) ? resources['canonical'] : {}
+          cloud = resources['cloudResources'].is_a?(Hash) ? resources['cloudResources'] : {}
+          scope = canonical.empty? ? cloud : canonical
+          collections = scope['collections'] || resources['collections'] || {}
+
+          smoke_collection_id = ''
+          contract_collection_id = ''
+          collections.each do |file_path, uid|
+            value = String(uid || '')
+            smoke_collection_id = value if smoke_collection_id.empty? && String(file_path).include?('[Smoke]')
+            contract_collection_id = value if contract_collection_id.empty? && String(file_path).include?('[Contract]')
+          end
+
+          if contract_collection_id.empty?
+            output('status', 'failed')
+            output('reason', 'No generated Contract collection ID was found in .postman/resources.yaml.')
+            exit 0
+          end
+
+          output('status', 'ready')
+          output('reason', '')
+          output('smoke_collection_id', smoke_collection_id)
+          output('contract_collection_id', contract_collection_id)
+          RUBY
+
+      - name: Explain skipped Postman CI
+        if: steps.resources.outputs.status == 'skipped'
+        shell: bash
+        env:
+          SKIP_REASON: ${{ steps.resources.outputs.reason }}
+        run: |
+          {
+            echo "## Postman CI"
+            echo
+            echo "Status: skipped"
+            echo
+            echo "$SKIP_REASON"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Enforce Postman resource resolution
+        if: steps.resources.outputs.status == 'failed'
+        shell: bash
+        env:
+          FAILURE_REASON: ${{ steps.resources.outputs.reason }}
+        run: |
+          echo "::error::${FAILURE_REASON:-Postman resources could not be resolved.}"
+          exit 1
+
+      - name: Start local service
+        if: steps.resources.outputs.status == 'ready'
+        shell: bash
+        env:
+          CI_START_COMMAND: ${{ steps.config.outputs.ci_start_command }}
+          SERVICE_LOG_FILE: ${{ runner.temp }}/demo-service.log
+          SERVICE_PID_FILE: ${{ runner.temp }}/demo-service.pid
+        run: |
+          set -euo pipefail
+          SERVICE_PID_FILE="$SERVICE_PID_FILE" bash -lc "$CI_START_COMMAND" > "$SERVICE_LOG_FILE" 2>&1 &
+          echo "$!" > "$SERVICE_PID_FILE"
+
+      - name: Wait for local service
+        if: steps.resources.outputs.status == 'ready'
+        shell: bash
+        env:
+          CI_HEALTH_URL: ${{ steps.config.outputs.ci_health_url }}
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 30); do
+            if curl -fsS "$CI_HEALTH_URL" >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Local service did not become healthy at $CI_HEALTH_URL"
+          exit 1
+
+      - name: Install Postman CLI
+        if: steps.resources.outputs.status == 'ready'
+        shell: bash
+        run: |
+          curl -fsSL "https://dl-cli.pstmn.io/install/unix.sh" | sh
+          echo "$HOME/.postman/cli" >> "$GITHUB_PATH"
+
+      - name: Sign in to Postman
+        if: steps.resources.outputs.status == 'ready'
+        shell: bash
+        env:
+          POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
+          POSTMAN_REGION: ${{ steps.config.outputs.postman_region }}
+        run: |
+          set -euo pipefail
+          if [ "$POSTMAN_REGION" = "eu" ]; then
+            postman login --with-api-key "$POSTMAN_API_KEY" --region eu
+          else
+            postman login --with-api-key "$POSTMAN_API_KEY"
+          fi
+
+      - id: smoke
+        name: Run Smoke collection
+        if: steps.resources.outputs.status == 'ready' && env.RUN_SMOKE == 'true' && steps.resources.outputs.smoke_collection_id != ''
+        shell: bash
+        env:
+          SMOKE_COLLECTION_ID: ${{ steps.resources.outputs.smoke_collection_id }}
+          CI_BASE_URL: ${{ steps.config.outputs.ci_base_url }}
+          SMOKE_FOLDER: ${{ steps.config.outputs.ci_smoke_folder }}
+          POSTMAN_SMOKE_LOG_FILE: ${{ runner.temp }}/postman-smoke-run.log
+        run: |
+          set +e
+          mkdir -p "$RUNNER_TEMP/postman-junit"
+          command=(postman collection run "$SMOKE_COLLECTION_ID" --env-var "baseUrl=$CI_BASE_URL" --env-var "CI=true")
+          if [ -n "$SMOKE_FOLDER" ]; then
+            command+=(-i "$SMOKE_FOLDER")
+          fi
+          command+=(--reporters cli,junit --reporter-junit-export "$RUNNER_TEMP/postman-junit/smoke.xml")
+          "${command[@]}" > "$POSTMAN_SMOKE_LOG_FILE" 2>&1
+          exit_code=$?
+          cat "$POSTMAN_SMOKE_LOG_FILE"
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Enforce requested Smoke collection
+        if: steps.resources.outputs.status == 'ready' && env.RUN_SMOKE == 'true' && steps.resources.outputs.smoke_collection_id == ''
+        run: |
+          echo "::error::Smoke run requested, but no generated Smoke collection ID was found in .postman/resources.yaml."
+          exit 1
+
+      - id: contract
+        name: Run Contract collection
+        if: steps.resources.outputs.status == 'ready' && steps.resources.outputs.contract_collection_id != ''
+        shell: bash
+        env:
+          CONTRACT_COLLECTION_ID: ${{ steps.resources.outputs.contract_collection_id }}
+          CI_BASE_URL: ${{ steps.config.outputs.ci_base_url }}
+          CONTRACT_FOLDER: ${{ steps.config.outputs.ci_contract_folder || vars.POSTMAN_CONTRACT_FOLDER }}
+          POSTMAN_CONTRACT_LOG_FILE: ${{ runner.temp }}/postman-contract-run.log
+        run: |
+          set +e
+          mkdir -p "$RUNNER_TEMP/postman-junit"
+          command=(postman collection run "$CONTRACT_COLLECTION_ID" --env-var "baseUrl=$CI_BASE_URL" --env-var "CI=true")
+          if [ -n "$CONTRACT_FOLDER" ]; then
+            command+=(-i "$CONTRACT_FOLDER")
+          fi
+          command+=(--reporters cli,junit --reporter-junit-export "$RUNNER_TEMP/postman-junit/contract.xml")
+          "${command[@]}" > "$POSTMAN_CONTRACT_LOG_FILE" 2>&1
+          exit_code=$?
+          cat "$POSTMAN_CONTRACT_LOG_FILE"
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Classify Postman run results
+        if: always() && steps.resources.outputs.status == 'ready'
+        shell: bash
+        env:
+          SMOKE_EXIT_CODE: ${{ steps.smoke.outputs.exit_code }}
+          CONTRACT_EXIT_CODE: ${{ steps.contract.outputs.exit_code }}
+          POSTMAN_SMOKE_LOG_FILE: ${{ runner.temp }}/postman-smoke-run.log
+          POSTMAN_CONTRACT_LOG_FILE: ${{ runner.temp }}/postman-contract-run.log
+        run: node scripts/classify-postman-run.js
+
+      - name: Stop local service
+        if: always() && steps.resources.outputs.status == 'ready'
+        shell: bash
+        env:
+          CI_STOP_COMMAND: ${{ steps.config.outputs.ci_stop_command }}
+          SERVICE_PID_FILE: ${{ runner.temp }}/demo-service.pid
+        run: bash -lc "$CI_STOP_COMMAND"
+
+      - name: Upload Postman CI diagnostics
+        if: always() && steps.resources.outputs.status == 'ready'
+        uses: actions/upload-artifact@v7
+        with:
+          name: postman-smoke-contract-diagnostics
+          if-no-files-found: ignore
+          path: |
+            ${{ runner.temp }}/postman-junit/*.xml
+            ${{ runner.temp }}/postman-smoke-run.log
+            ${{ runner.temp }}/postman-contract-run.log
+            ${{ runner.temp }}/demo-service.log
+
+      - name: Enforce Smoke gate
+        if: steps.resources.outputs.status == 'ready' && steps.smoke.outputs.exit_code != '' && steps.smoke.outputs.exit_code != '0'
+        run: |
+          echo "::error::Smoke collection failed"
+          exit 1
+
+      - name: Enforce Contract gate
+        if: steps.resources.outputs.status == 'ready' && steps.contract.outputs.exit_code != '' && steps.contract.outputs.exit_code != '0'
+        run: |
+          echo "::error::Contract collection failed"
+          exit 1

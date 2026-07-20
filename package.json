@@ -1,0 +1,15 @@
+{
+  "name": "adaptavist-provisions-demo-template",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Hands-on Postman API onboarding template for a realistic access provisioning service.",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "UNLICENSED"
+}

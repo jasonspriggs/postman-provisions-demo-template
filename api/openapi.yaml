@@ -1,0 +1,667 @@
+openapi: 3.0.3
+info:
+  title: Adaptavist Access Provisioning API
+  version: 1.0.0
+  description: API for requesting, approving, and tracking access packages during onboarding and project mobilization.
+servers:
+  - url: http://127.0.0.1:4010
+    description: Local CI service
+tags:
+  - name: Health
+    description: Service readiness and liveness checks.
+  - name: Access Packages
+    description: Catalog of access bundles users can request.
+  - name: Access Requests
+    description: Access request submission, review, and tracking.
+paths:
+  /v1/health:
+    get:
+      tags:
+        - Health
+      operationId: getHealth
+      summary: Check service health
+      description: Returns the current service health state for CI and smoke checks.
+      responses:
+        '200':
+          description: Service is healthy.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              examples:
+                healthy:
+                  value:
+                    status: ok
+                    service: adaptavist-access-provisioning-api
+                    version: 1.0.0
+                    timestamp: '2026-07-20T14:20:00.000Z'
+  /v1/access-packages:
+    get:
+      tags:
+        - Access Packages
+      operationId: listAccessPackages
+      summary: List requestable access packages
+      description: Returns the catalog of access packages that can be requested.
+      responses:
+        '200':
+          description: Access package catalog.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessPackageList'
+              examples:
+                catalog:
+                  value:
+                    items:
+                      - id: pkg-jira-software-standard
+                        name: Jira Software Standard
+                        product: Jira Software
+                        category: atlassian
+                        ownerTeam: platform-operations
+                        approvalRequired: true
+                        defaultDurationDays: 90
+                        estimatedFulfillmentMinutes: 45
+                      - id: pkg-confluence-knowledge-base
+                        name: Confluence Knowledge Base
+                        product: Confluence
+                        category: atlassian
+                        ownerTeam: knowledge-systems
+                        approvalRequired: false
+                        defaultDurationDays: 180
+                        estimatedFulfillmentMinutes: 20
+                    count: 2
+  /v1/access-requests:
+    get:
+      tags:
+        - Access Requests
+      operationId: listAccessRequests
+      summary: List access requests
+      description: Returns access requests, optionally filtered by status, package, or requester.
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: Filter requests by lifecycle status.
+          schema:
+            $ref: '#/components/schemas/AccessRequestStatus'
+          example: approved
+        - name: packageId
+          in: query
+          required: false
+          description: Filter requests for a single access package.
+          schema:
+            type: string
+          example: pkg-jira-software-standard
+        - name: requesterEmail
+          in: query
+          required: false
+          description: Filter requests submitted by an email address.
+          schema:
+            type: string
+            format: email
+          example: maya.chen@example.com
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of requests to return.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+          example: 25
+      responses:
+        '200':
+          description: Matching access requests.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessRequestList'
+              examples:
+                approvedRequests:
+                  value:
+                    items:
+                      - id: apr-1001
+                        packageId: pkg-jira-software-standard
+                        requester:
+                          email: maya.chen@example.com
+                          displayName: Maya Chen
+                          department: Engineering
+                        target:
+                          type: user
+                          email: maya.chen@example.com
+                        environment: prod
+                        status: approved
+                        priority: normal
+                        businessJustification: Needs Jira access for the billing migration project.
+                        requestedAt: '2026-07-20T14:10:00.000Z'
+                        updatedAt: '2026-07-20T15:05:00.000Z'
+                        approver:
+                          email: sam.rivera@example.com
+                          displayName: Sam Rivera
+                        fulfillment:
+                          status: queued
+                          ticketUrl: https://example.atlassian.net/browse/ACCESS-1842
+                          completedAt: null
+                    count: 1
+                    links:
+                      self: /v1/access-requests?status=approved
+    post:
+      tags:
+        - Access Requests
+      operationId: createAccessRequest
+      summary: Create an access request
+      description: Submits a new request for an access package.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAccessRequest'
+            examples:
+              githubAccess:
+                value:
+                  packageId: pkg-github-engineering
+                  requesterEmail: alex.morgan@example.com
+                  requesterName: Alex Morgan
+                  department: Engineering
+                  targetType: user
+                  targetEmail: alex.morgan@example.com
+                  environment: prod
+                  priority: urgent
+                  businessJustification: Requires repository access for an incident response rotation.
+      responses:
+        '201':
+          description: Access request created.
+          headers:
+            Location:
+              description: Relative URL of the new access request.
+              schema:
+                type: string
+              example: /v1/access-requests/apr-2000
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessRequest'
+              examples:
+                created:
+                  value:
+                    id: apr-2000
+                    packageId: pkg-github-engineering
+                    requester:
+                      email: alex.morgan@example.com
+                      displayName: Alex Morgan
+                      department: Engineering
+                    target:
+                      type: user
+                      email: alex.morgan@example.com
+                    environment: prod
+                    status: pending_approval
+                    priority: urgent
+                    businessJustification: Requires repository access for an incident response rotation.
+                    requestedAt: '2026-07-20T16:00:00.000Z'
+                    updatedAt: '2026-07-20T16:00:00.000Z'
+                    approver: null
+                    fulfillment:
+                      status: not_started
+                      ticketUrl: null
+                      completedAt: null
+        '400':
+          description: Request body failed validation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: Request references an unknown access package.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/access-requests/{requestId}:
+    parameters:
+      - $ref: '#/components/parameters/RequestId'
+    get:
+      tags:
+        - Access Requests
+      operationId: getAccessRequest
+      summary: Get an access request
+      description: Returns one access request by ID.
+      responses:
+        '200':
+          description: Access request found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessRequest'
+              examples:
+                approved:
+                  value:
+                    id: apr-1001
+                    packageId: pkg-jira-software-standard
+                    requester:
+                      email: maya.chen@example.com
+                      displayName: Maya Chen
+                      department: Engineering
+                    target:
+                      type: user
+                      email: maya.chen@example.com
+                    environment: prod
+                    status: approved
+                    priority: normal
+                    businessJustification: Needs Jira access for the billing migration project.
+                    requestedAt: '2026-07-20T14:10:00.000Z'
+                    updatedAt: '2026-07-20T15:05:00.000Z'
+                    approver:
+                      email: sam.rivera@example.com
+                      displayName: Sam Rivera
+                    fulfillment:
+                      status: queued
+                      ticketUrl: https://example.atlassian.net/browse/ACCESS-1842
+                      completedAt: null
+        '404':
+          description: Access request not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/access-requests/{requestId}/decision:
+    parameters:
+      - $ref: '#/components/parameters/RequestId'
+    post:
+      tags:
+        - Access Requests
+      operationId: decideAccessRequest
+      summary: Approve or reject an access request
+      description: Records an approval decision and queues fulfillment when approved.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccessDecision'
+            examples:
+              approve:
+                value:
+                  decision: approved
+                  approverEmail: sam.rivera@example.com
+                  approverName: Sam Rivera
+                  note: Approved for the current project.
+      responses:
+        '200':
+          description: Decision recorded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessRequest'
+              examples:
+                approved:
+                  value:
+                    id: apr-1001
+                    packageId: pkg-jira-software-standard
+                    requester:
+                      email: maya.chen@example.com
+                      displayName: Maya Chen
+                      department: Engineering
+                    target:
+                      type: user
+                      email: maya.chen@example.com
+                    environment: prod
+                    status: approved
+                    priority: normal
+                    businessJustification: Needs Jira access for the billing migration project.
+                    requestedAt: '2026-07-20T14:10:00.000Z'
+                    updatedAt: '2026-07-20T15:05:00.000Z'
+                    approver:
+                      email: sam.rivera@example.com
+                      displayName: Sam Rivera
+                    fulfillment:
+                      status: queued
+                      ticketUrl: https://example.atlassian.net/browse/ACCESS-1842
+                      completedAt: null
+        '400':
+          description: Decision body failed validation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Access request not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+components:
+  parameters:
+    RequestId:
+      name: requestId
+      in: path
+      required: true
+      description: Access request identifier.
+      schema:
+        type: string
+        pattern: '^apr-[0-9]+$'
+      example: apr-1001
+  schemas:
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+        - service
+        - version
+        - timestamp
+      properties:
+        status:
+          type: string
+          enum:
+            - ok
+        service:
+          type: string
+          example: adaptavist-access-provisioning-api
+        version:
+          type: string
+          example: 1.0.0
+        timestamp:
+          type: string
+          format: date-time
+    AccessPackageList:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - count
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AccessPackage'
+        count:
+          type: integer
+          minimum: 0
+    AccessPackage:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - product
+        - category
+        - ownerTeam
+        - approvalRequired
+        - defaultDurationDays
+        - estimatedFulfillmentMinutes
+      properties:
+        id:
+          type: string
+          example: pkg-jira-software-standard
+        name:
+          type: string
+          example: Jira Software Standard
+        product:
+          type: string
+          example: Jira Software
+        category:
+          type: string
+          enum:
+            - atlassian
+            - engineering
+            - finance
+            - operations
+        ownerTeam:
+          type: string
+          example: platform-operations
+        approvalRequired:
+          type: boolean
+        defaultDurationDays:
+          type: integer
+          minimum: 1
+        estimatedFulfillmentMinutes:
+          type: integer
+          minimum: 1
+    AccessRequestList:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - count
+        - links
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AccessRequest'
+        count:
+          type: integer
+          minimum: 0
+        links:
+          type: object
+          additionalProperties: false
+          required:
+            - self
+          properties:
+            self:
+              type: string
+              example: /v1/access-requests?status=approved
+    AccessRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - packageId
+        - requester
+        - target
+        - environment
+        - status
+        - priority
+        - businessJustification
+        - requestedAt
+        - updatedAt
+        - approver
+        - fulfillment
+      properties:
+        id:
+          type: string
+          pattern: '^apr-[0-9]+$'
+          example: apr-1001
+        packageId:
+          type: string
+          example: pkg-jira-software-standard
+        requester:
+          $ref: '#/components/schemas/Requester'
+        target:
+          $ref: '#/components/schemas/TargetPrincipal'
+        environment:
+          $ref: '#/components/schemas/RuntimeEnvironment'
+        status:
+          $ref: '#/components/schemas/AccessRequestStatus'
+        priority:
+          $ref: '#/components/schemas/Priority'
+        businessJustification:
+          type: string
+          minLength: 10
+        requestedAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        approver:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/Approver'
+        fulfillment:
+          $ref: '#/components/schemas/Fulfillment'
+    Requester:
+      type: object
+      additionalProperties: false
+      required:
+        - email
+        - displayName
+        - department
+      properties:
+        email:
+          type: string
+          format: email
+        displayName:
+          type: string
+          example: Maya Chen
+        department:
+          type: string
+          example: Engineering
+    TargetPrincipal:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+        - email
+      properties:
+        type:
+          type: string
+          enum:
+            - user
+            - group
+        email:
+          type: string
+          format: email
+    Approver:
+      type: object
+      additionalProperties: false
+      required:
+        - email
+        - displayName
+      properties:
+        email:
+          type: string
+          format: email
+        displayName:
+          type: string
+          example: Sam Rivera
+    Fulfillment:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+        - ticketUrl
+        - completedAt
+      properties:
+        status:
+          type: string
+          enum:
+            - not_started
+            - queued
+            - in_progress
+            - completed
+            - failed
+        ticketUrl:
+          type: string
+          format: uri
+          nullable: true
+          example: https://example.atlassian.net/browse/ACCESS-1842
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+    CreateAccessRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - packageId
+        - requesterEmail
+        - requesterName
+        - department
+        - targetEmail
+        - environment
+        - businessJustification
+      properties:
+        packageId:
+          type: string
+          example: pkg-github-engineering
+        requesterEmail:
+          type: string
+          format: email
+          example: alex.morgan@example.com
+        requesterName:
+          type: string
+          example: Alex Morgan
+        department:
+          type: string
+          example: Engineering
+        targetType:
+          type: string
+          enum:
+            - user
+            - group
+          default: user
+          example: user
+        targetEmail:
+          type: string
+          format: email
+          example: alex.morgan@example.com
+        environment:
+          $ref: '#/components/schemas/RuntimeEnvironment'
+        priority:
+          $ref: '#/components/schemas/Priority'
+        businessJustification:
+          type: string
+          minLength: 10
+          example: Requires repository access for an incident response rotation.
+    AccessDecision:
+      type: object
+      additionalProperties: false
+      required:
+        - decision
+        - approverEmail
+      properties:
+        decision:
+          type: string
+          enum:
+            - approved
+            - rejected
+        approverEmail:
+          type: string
+          format: email
+          example: sam.rivera@example.com
+        approverName:
+          type: string
+          example: Sam Rivera
+        note:
+          type: string
+          maxLength: 500
+          example: Approved for the current project.
+    RuntimeEnvironment:
+      type: string
+      enum:
+        - prod
+        - sandbox
+    Priority:
+      type: string
+      enum:
+        - low
+        - normal
+        - urgent
+      default: normal
+    AccessRequestStatus:
+      type: string
+      enum:
+        - pending_approval
+        - approved
+        - rejected
+        - fulfilled
+    Problem:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - message
+        - traceId
+      properties:
+        code:
+          type: string
+          example: request_not_found
+        message:
+          type: string
+          example: Access request apr-404 was not found.
+        traceId:
+          type: string
+          example: trc-8f7340b5af23

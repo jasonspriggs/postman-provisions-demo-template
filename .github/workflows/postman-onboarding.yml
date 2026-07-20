@@ -1,0 +1,480 @@
+name: Postman Onboarding
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - 'README.md'
+      - 'docs/**'
+      - '.gitignore'
+      - '.postman/**'
+      - 'postman/**'
+  workflow_dispatch:
+    inputs:
+      requester_email:
+        description: Requester email for workspace membership. Leave blank to use .postman-template/onboarding.yml.
+        required: false
+        default: ''
+        type: string
+      repo_write_mode:
+        description: Whether generated commits should stay local to the workflow run or push to main after CI gates.
+        required: true
+        default: commit-only
+        type: choice
+        options:
+          - commit-only
+          - commit-and-push
+      collection_sync_mode:
+        description: Collection lifecycle policy.
+        required: true
+        default: refresh
+        type: choice
+        options:
+          - refresh
+          - version
+      run_smoke:
+        description: Run generated Smoke collection after onboarding. Contract always runs.
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  group: postman-onboarding-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  actions: write
+  contents: write
+
+jobs:
+  onboarding:
+    if: github.event_name == 'workflow_dispatch' || github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    env:
+      POSTMAN_REGION_OVERRIDE: ${{ vars.POSTMAN_REGION }}
+      POSTMAN_ORG_MODE_OVERRIDE: ${{ vars.POSTMAN_ORG_MODE }}
+      POSTMAN_SYSTEM_ENV_MAP_JSON: ${{ vars.POSTMAN_SYSTEM_ENV_MAP_JSON }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Run service unit tests
+        run: npm test
+
+      - id: config
+        name: Load onboarding template
+        shell: bash
+        run: |
+          ruby <<'RUBY'
+          require 'json'
+          require 'yaml'
+
+          def fail_config(message)
+            abort("::error::#{message}")
+          end
+
+          def output(name, value)
+            escaped = String(value).gsub('%', '%25').gsub("\n", '%0A').gsub("\r", '%0D')
+            File.open(ENV.fetch('GITHUB_OUTPUT'), 'a') { |file| file.puts("#{name}=#{escaped}") }
+          end
+
+          config_path = '.postman-template/onboarding.yml'
+          fail_config("Missing #{config_path}") unless File.exist?(config_path)
+          config = YAML.load_file(config_path) || {}
+          fail_config('onboarding config version must be 1') unless config['version'].to_i == 1
+
+          spec = config['spec'].is_a?(Hash) ? config['spec'] : {}
+          fail_config('spec.source must be repo') unless String(spec['source']).strip == 'repo'
+          spec_path = String(spec['path'] || '').strip
+          fail_config('spec.path is required') if spec_path.empty?
+          fail_config("spec.path #{spec_path} does not exist") unless File.exist?(spec_path)
+
+          postman = config['postman'].is_a?(Hash) ? config['postman'] : {}
+          postman_region = String(ENV['POSTMAN_REGION_OVERRIDE'].to_s.strip.empty? ? postman['region'] : ENV['POSTMAN_REGION_OVERRIDE']).strip.downcase
+          postman_region = 'us' if postman_region.empty?
+          fail_config('postman.region must be us or eu') unless %w[us eu].include?(postman_region)
+          org_mode_value = ENV['POSTMAN_ORG_MODE_OVERRIDE'].to_s.strip.empty? ? postman['orgMode'] : ENV['POSTMAN_ORG_MODE_OVERRIDE']
+          org_mode = String(org_mode_value.nil? ? true : org_mode_value).strip.downcase
+          org_mode = 'true' if org_mode.empty?
+          fail_config('postman.orgMode must be true or false') unless %w[true false].include?(org_mode)
+
+          service = config['service'].is_a?(Hash) ? config['service'] : {}
+          project_name = String(service['name'] || '').strip
+          fail_config('service.name is required') if project_name.empty?
+
+          repo_sync = config['repoSync'].is_a?(Hash) ? config['repoSync'] : {}
+          environments = repo_sync['environments'].is_a?(Hash) ? repo_sync['environments'] : {}
+          fail_config('repoSync.environments must define at least one environment') if environments.empty?
+
+          env_runtime_urls = {}
+          environments.each do |name, details|
+            env_name = String(name).strip
+            fail_config('environment names cannot be empty') if env_name.empty?
+
+            details = details.is_a?(Hash) ? details : {}
+            base_url = String(details['baseUrl'] || '').strip
+            template = String(details['baseUrlTemplate'] || '').strip
+            if base_url.empty? && !template.empty?
+              base_url = template.gsub(/\{\{([A-Z0-9_]+)\}\}/) { ENV[Regexp.last_match(1)].to_s }
+            end
+            fail_config("repoSync.environments.#{env_name}.baseUrl or baseUrlTemplate is required") if base_url.empty?
+            env_runtime_urls[env_name] = base_url
+          end
+
+          ci = config['ci'].is_a?(Hash) ? config['ci'] : {}
+          governance = config['governance'].is_a?(Hash) ? config['governance'] : {}
+          system_env_map = repo_sync['systemEnvMap'].is_a?(Hash) ? repo_sync['systemEnvMap'] : {}
+
+          if ENV['POSTMAN_SYSTEM_ENV_MAP_JSON'].to_s.strip != ''
+            begin
+              parsed_system_env_map = JSON.parse(ENV.fetch('POSTMAN_SYSTEM_ENV_MAP_JSON'))
+              fail_config('POSTMAN_SYSTEM_ENV_MAP_JSON must be a JSON object') unless parsed_system_env_map.is_a?(Hash)
+              system_env_map = parsed_system_env_map
+            rescue JSON::ParserError => error
+              fail_config("POSTMAN_SYSTEM_ENV_MAP_JSON is not valid JSON: #{error.message}")
+            end
+          end
+
+          output('spec_path', spec_path)
+          output('postman_region', postman_region)
+          output('org_mode', org_mode)
+          output('project_name', project_name)
+          output('domain', service['domain'].to_s.strip)
+          output('domain_code', service['domainCode'].to_s.strip)
+          output('governance_group', service['governanceGroup'].to_s.strip)
+          output('requester_email', service['requesterEmail'].to_s.strip)
+          output('generate_ci_workflow', repo_sync.key?('generateCiWorkflow') ? String(repo_sync['generateCiWorkflow']) : 'false')
+          output('environments_json', JSON.generate(env_runtime_urls.keys))
+          output('env_runtime_urls_json', JSON.generate(env_runtime_urls))
+          output('system_env_map_json', JSON.generate(system_env_map))
+          output('breaking_change_mode', governance['breakingChangeMode'].to_s.strip)
+          output('ci_base_url', ci['baseUrl'].to_s.strip)
+          output('ci_health_url', ci['healthUrl'].to_s.strip)
+          output('ci_start_command', ci['startCommand'].to_s.strip)
+          output('ci_stop_command', ci['stopCommand'].to_s.strip)
+          output('ci_contract_folder', ci['contractFolder'].to_s.strip)
+          output('ci_smoke_folder', ci['smokeFolder'].to_s.strip)
+          RUBY
+
+      - id: run_config
+        name: Resolve workflow run mode
+        shell: bash
+        env:
+          REPO_WRITE_MODE_INPUT: ${{ github.event.inputs.repo_write_mode || '' }}
+          COLLECTION_SYNC_MODE_INPUT: ${{ github.event.inputs.collection_sync_mode || '' }}
+          RUN_SMOKE_INPUT: ${{ github.event.inputs.run_smoke || '' }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$REPO_WRITE_MODE_INPUT" ] && [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            repo_write_mode="commit-and-push"
+          else
+            repo_write_mode="${REPO_WRITE_MODE_INPUT:-commit-only}"
+          fi
+
+          case "$repo_write_mode" in
+            commit-only|commit-and-push) ;;
+            *)
+              echo "::error::Unsupported repo_write_mode: $repo_write_mode"
+              exit 1
+              ;;
+          esac
+
+          echo "repo_write_mode=$repo_write_mode" >> "$GITHUB_OUTPUT"
+          echo "collection_sync_mode=${COLLECTION_SYNC_MODE_INPUT:-refresh}" >> "$GITHUB_OUTPUT"
+          echo "run_smoke=${RUN_SMOKE_INPUT:-false}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate required runtime configuration
+        shell: bash
+        env:
+          POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
+        run: |
+          set -euo pipefail
+          missing=()
+          [ -n "$POSTMAN_API_KEY" ] || missing+=("secrets.POSTMAN_API_KEY")
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf '::error::Missing required configuration: %s\n' "${missing[*]}"
+            exit 1
+          fi
+
+      - id: postman_token
+        name: Resolve Postman service-account token
+        uses: postman-cs/postman-resolve-service-token-action@v2
+        with:
+          postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
+          postman-region: ${{ steps.config.outputs.postman_region }}
+
+      - name: Summarize repo spec source
+        shell: bash
+        env:
+          SPEC_PATH: ${{ steps.config.outputs.spec_path }}
+        run: |
+          {
+            echo "## API Spec Source"
+            echo
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Source | repo spec |"
+            echo "| Spec path | ${SPEC_PATH:-none} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - id: onboard
+        name: Run Postman composite onboarding
+        uses: postman-cs/postman-api-onboarding-action@v2
+        with:
+          project-name: ${{ steps.config.outputs.project_name }}
+          domain: ${{ steps.config.outputs.domain }}
+          domain-code: ${{ steps.config.outputs.domain_code }}
+          governance-group: ${{ steps.config.outputs.governance_group }}
+          requester-email: ${{ inputs.requester_email || steps.config.outputs.requester_email }}
+          spec-path: ${{ steps.config.outputs.spec_path }}
+          collection-sync-mode: ${{ steps.run_config.outputs.collection_sync_mode }}
+          breaking-change-mode: ${{ steps.config.outputs.breaking_change_mode || 'off' }}
+          generate-ci-workflow: ${{ steps.config.outputs.generate_ci_workflow }}
+          environments-json: ${{ steps.config.outputs.environments_json }}
+          system-env-map-json: ${{ steps.config.outputs.system_env_map_json }}
+          env-runtime-urls-json: ${{ steps.config.outputs.env_runtime_urls_json }}
+          repo-write-mode: commit-only
+          skip-built-in-tests: 'true'
+          credential-preflight: enforce
+          integration-backend: bifrost
+          postman-region: ${{ steps.config.outputs.postman_region }}
+          postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
+          postman-access-token: ${{ steps.postman_token.outputs.token }}
+          postman-team-id: ${{ steps.postman_token.outputs.team-id }}
+          workspace-team-id: ${{ vars.POSTMAN_WORKSPACE_TEAM_ID || steps.postman_token.outputs.team-id }}
+          org-mode: ${{ steps.config.outputs.org_mode }}
+          github-token: ${{ github.token }}
+
+      - name: Start local service for contract testing
+        shell: bash
+        env:
+          CI_START_COMMAND: ${{ steps.config.outputs.ci_start_command || './scripts/start-service.sh' }}
+          SERVICE_LOG_FILE: ${{ runner.temp }}/demo-service.log
+          SERVICE_PID_FILE: ${{ runner.temp }}/demo-service.pid
+        run: |
+          set -euo pipefail
+          SERVICE_PID_FILE="$SERVICE_PID_FILE" bash -lc "$CI_START_COMMAND" > "$SERVICE_LOG_FILE" 2>&1 &
+          echo "$!" > "$SERVICE_PID_FILE"
+
+      - name: Wait for local service
+        shell: bash
+        env:
+          CI_HEALTH_URL: ${{ steps.config.outputs.ci_health_url || 'http://127.0.0.1:4010/v1/health' }}
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 30); do
+            if curl -fsS "$CI_HEALTH_URL" >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Local service did not become healthy at $CI_HEALTH_URL"
+          exit 1
+
+      - name: Install Postman CLI for CI tests
+        shell: bash
+        run: |
+          curl -fsSL "https://dl-cli.pstmn.io/install/unix.sh" | sh
+          echo "$HOME/.postman/cli" >> "$GITHUB_PATH"
+
+      - name: Sign in to Postman for CI tests
+        shell: bash
+        env:
+          POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
+          POSTMAN_REGION: ${{ steps.config.outputs.postman_region }}
+        run: |
+          set -euo pipefail
+          if [ "$POSTMAN_REGION" = "eu" ]; then
+            postman login --with-api-key "$POSTMAN_API_KEY" --region eu
+          else
+            postman login --with-api-key "$POSTMAN_API_KEY"
+          fi
+
+      - id: postman_tests
+        name: Run Contract collection and optional Smoke collection
+        shell: bash
+        env:
+          COLLECTIONS_JSON: ${{ steps.onboard.outputs.collections-json }}
+          CI_BASE_URL: ${{ steps.config.outputs.ci_base_url || 'http://127.0.0.1:4010' }}
+          CONTRACT_FOLDER: ${{ steps.config.outputs.ci_contract_folder }}
+          SMOKE_FOLDER: ${{ steps.config.outputs.ci_smoke_folder }}
+          RUN_SMOKE: ${{ steps.run_config.outputs.run_smoke }}
+          POSTMAN_CONTRACT_LOG_FILE: ${{ runner.temp }}/postman-contract-run.log
+          POSTMAN_SMOKE_LOG_FILE: ${{ runner.temp }}/postman-smoke-run.log
+        run: |
+          set +e
+          mkdir -p "$RUNNER_TEMP/postman-junit"
+
+          if ! command -v jq >/dev/null 2>&1; then
+            echo "::error::jq is required to parse onboarding collection outputs"
+            echo "contract_exit_code=1" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          contract_collection_id="$(printf '%s' "$COLLECTIONS_JSON" | jq -r '.contract // empty')"
+          smoke_collection_id="$(printf '%s' "$COLLECTIONS_JSON" | jq -r '.smoke // empty')"
+          if [ -z "$contract_collection_id" ]; then
+            echo "::error::No generated Contract collection ID was emitted by onboarding"
+            echo "contract_exit_code=1" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          contract_command=(postman collection run "$contract_collection_id" --env-var "baseUrl=$CI_BASE_URL" --env-var "CI=true")
+          if [ -n "$CONTRACT_FOLDER" ]; then
+            contract_command+=(-i "$CONTRACT_FOLDER")
+          fi
+          contract_command+=(--reporters cli,junit --reporter-junit-export "$RUNNER_TEMP/postman-junit/contract.xml")
+          "${contract_command[@]}" > "$POSTMAN_CONTRACT_LOG_FILE" 2>&1
+          contract_exit_code=$?
+          cat "$POSTMAN_CONTRACT_LOG_FILE"
+          echo "contract_exit_code=$contract_exit_code" >> "$GITHUB_OUTPUT"
+
+          smoke_exit_code=""
+          if [ "$RUN_SMOKE" = "true" ]; then
+            if [ -z "$smoke_collection_id" ]; then
+              echo "::error::Smoke run requested, but no generated Smoke collection ID was emitted by onboarding"
+              smoke_exit_code=1
+            else
+              smoke_command=(postman collection run "$smoke_collection_id" --env-var "baseUrl=$CI_BASE_URL" --env-var "CI=true")
+              if [ -n "$SMOKE_FOLDER" ]; then
+                smoke_command+=(-i "$SMOKE_FOLDER")
+              fi
+              smoke_command+=(--reporters cli,junit --reporter-junit-export "$RUNNER_TEMP/postman-junit/smoke.xml")
+              "${smoke_command[@]}" > "$POSTMAN_SMOKE_LOG_FILE" 2>&1
+              smoke_exit_code=$?
+              cat "$POSTMAN_SMOKE_LOG_FILE"
+            fi
+          else
+            echo "Smoke run disabled by workflow configuration."
+          fi
+          echo "smoke_exit_code=$smoke_exit_code" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Classify onboarding CI test results
+        if: always()
+        shell: bash
+        env:
+          CONTRACT_EXIT_CODE: ${{ steps.postman_tests.outputs.contract_exit_code }}
+          SMOKE_EXIT_CODE: ${{ steps.postman_tests.outputs.smoke_exit_code }}
+          POSTMAN_CONTRACT_LOG_FILE: ${{ runner.temp }}/postman-contract-run.log
+          POSTMAN_SMOKE_LOG_FILE: ${{ runner.temp }}/postman-smoke-run.log
+        run: node scripts/classify-postman-run.js
+
+      - name: Stop local service
+        if: always()
+        shell: bash
+        env:
+          CI_STOP_COMMAND: ${{ steps.config.outputs.ci_stop_command || './scripts/stop-service.sh' }}
+          SERVICE_PID_FILE: ${{ runner.temp }}/demo-service.pid
+        run: bash -lc "$CI_STOP_COMMAND"
+
+      - name: Upload onboarding CI diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: postman-onboarding-ci-diagnostics
+          if-no-files-found: ignore
+          path: |
+            ${{ runner.temp }}/postman-junit/*.xml
+            ${{ runner.temp }}/postman-contract-run.log
+            ${{ runner.temp }}/postman-smoke-run.log
+            ${{ runner.temp }}/demo-service.log
+
+      - name: Enforce Contract gate
+        if: steps.postman_tests.outputs.contract_exit_code != '0'
+        run: |
+          echo "::error::Contract collection failed"
+          exit 1
+
+      - name: Enforce Smoke gate
+        if: steps.postman_tests.outputs.smoke_exit_code != '' && steps.postman_tests.outputs.smoke_exit_code != '0'
+        run: |
+          echo "::error::Smoke collection failed"
+          exit 1
+
+      - name: Summarize onboarding
+        if: always()
+        shell: bash
+        env:
+          WORKSPACE_URL: ${{ steps.onboard.outputs.workspace-url }}
+          MOCK_URL: ${{ steps.onboard.outputs.mock-url }}
+          MONITOR_ID: ${{ steps.onboard.outputs.monitor-id }}
+          COMMIT_SHA: ${{ steps.onboard.outputs.commit-sha }}
+          COLLECTIONS_JSON: ${{ steps.onboard.outputs.collections-json }}
+          REPO_SYNC_SUMMARY_JSON: ${{ steps.onboard.outputs.repo-sync-summary-json }}
+        run: |
+          {
+            echo "## Postman Onboarding"
+            echo
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Workspace | ${WORKSPACE_URL:-none} |"
+            echo "| Mock URL | ${MOCK_URL:-none} |"
+            echo "| Monitor ID | ${MONITOR_ID:-none} |"
+            echo "| Repo-sync commit | ${COMMIT_SHA:-none} |"
+            echo
+            echo "<details><summary>Collections</summary>"
+            echo
+            echo '```json'
+            echo "${COLLECTIONS_JSON:-{}}"
+            echo '```'
+            echo
+            echo "</details>"
+            echo
+            echo "<details><summary>Repo sync summary</summary>"
+            echo
+            echo '```json'
+            echo "${REPO_SYNC_SUMMARY_JSON:-{}}"
+            echo '```'
+            echo
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - id: pending_commits
+        name: Check for generated commits
+        shell: bash
+        run: |
+          set -euo pipefail
+          count="$(git rev-list --count "origin/main..HEAD" 2>/dev/null || git rev-list --count HEAD)"
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+
+      - name: Mark generated commits to skip recursive Actions runs
+        if: steps.pending_commits.outputs.count != '0'
+        shell: bash
+        run: |
+          set -euo pipefail
+          message_file="$RUNNER_TEMP/generated-commit-message.txt"
+          git log -1 --pretty=%B > "$message_file"
+
+          if grep -Eiq '\[(skip ci|ci skip|no ci|skip actions|actions skip)\]' "$message_file"; then
+            exit 0
+          fi
+
+          {
+            cat "$message_file"
+            printf '\n[skip actions]\n'
+          } > "$message_file.updated"
+
+          git commit --amend -F "$message_file.updated"
+
+      - name: Push generated commits to main
+        if: steps.run_config.outputs.repo_write_mode == 'commit-and-push' && steps.pending_commits.outputs.count != '0'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git push origin HEAD:main
+
+      - name: No sync changes
+        if: steps.pending_commits.outputs.count == '0'
+        run: echo "No generated Postman artifact changes were produced."
+
+      - name: Commit-only mode selected
+        if: steps.run_config.outputs.repo_write_mode == 'commit-only' && steps.pending_commits.outputs.count != '0'
+        run: echo "Generated commits were created locally only because repo_write_mode=commit-only."
