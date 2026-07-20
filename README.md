@@ -19,13 +19,23 @@ Add this repository secret:
 
 - `POSTMAN_API_KEY`: Postman service account API key.
 
-Add these repository variables if needed:
+Add these repository variables:
 
 - `POSTMAN_REGION`: `us` or `eu`. Defaults to `us`.
 - `POSTMAN_ORG_MODE`: `true` or `false`. Defaults to `true`.
-- `POSTMAN_WORKSPACE_TEAM_ID`: optional sub-team ID for workspace creation. Leave blank to use the team ID resolved from `POSTMAN_API_KEY`.
+- `POSTMAN_WORKSPACE_TEAM_ID`: required when `POSTMAN_ORG_MODE=true`. Use a numeric Postman sub-team ID that the service account can act in. Do not use the parent Postman team ID resolved from the API key.
+
+Add these repository variables if needed:
+
 - `POSTMAN_SYSTEM_ENV_MAP_JSON`: optional Catalog system-environment mapping, for example `{"prod":"<system-env-uuid>"}`.
 - `POSTMAN_RUN_SMOKE`: set to `true` only when you want PR CI to run Smoke by default.
+
+To find the workspace sub-team ID, call the Postman Teams API with the same service account key:
+
+```sh
+curl -fsS https://api.getpostman.com/teams \
+  -H "X-API-Key: $POSTMAN_API_KEY"
+```
 
 ## 2. Run The Onboarding Workflow
 

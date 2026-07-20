@@ -210,6 +210,29 @@ jobs:
           postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
           postman-region: ${{ steps.config.outputs.postman_region }}
 
+      - name: Validate Postman org-mode workspace team
+        shell: bash
+        env:
+          ORG_MODE: ${{ steps.config.outputs.org_mode }}
+          RESOLVED_POSTMAN_TEAM_ID: ${{ steps.postman_token.outputs.team-id }}
+          POSTMAN_WORKSPACE_TEAM_ID: ${{ vars.POSTMAN_WORKSPACE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+
+          if [ "$ORG_MODE" != "true" ]; then
+            exit 0
+          fi
+
+          if [ -z "$POSTMAN_WORKSPACE_TEAM_ID" ]; then
+            echo "::error::Missing required configuration: vars.POSTMAN_WORKSPACE_TEAM_ID. In org-mode this must be a numeric Postman sub-team ID that the service account can act in, not the resolved parent Postman team ID."
+            exit 1
+          fi
+
+          if [ "$POSTMAN_WORKSPACE_TEAM_ID" = "$RESOLVED_POSTMAN_TEAM_ID" ]; then
+            echo "::error::vars.POSTMAN_WORKSPACE_TEAM_ID is set to the resolved Postman team ID ($RESOLVED_POSTMAN_TEAM_ID). workspace-team-id must be a numeric org sub-team ID from GET /teams that the service account can act in."
+            exit 1
+          fi
+
       - name: Summarize repo spec source
         shell: bash
         env:
@@ -248,7 +271,7 @@ jobs:
           postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
           postman-access-token: ${{ steps.postman_token.outputs.token }}
           postman-team-id: ${{ steps.postman_token.outputs.team-id }}
-          workspace-team-id: ${{ vars.POSTMAN_WORKSPACE_TEAM_ID || steps.postman_token.outputs.team-id }}
+          workspace-team-id: ${{ vars.POSTMAN_WORKSPACE_TEAM_ID }}
           org-mode: ${{ steps.config.outputs.org_mode }}
           github-token: ${{ github.token }}
 
