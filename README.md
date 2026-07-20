@@ -4,6 +4,15 @@ Use this repository to run the Postman API onboarding workflow hands-on.
 
 The service code lives in `src/`, the OpenAPI source of truth lives in `api/openapi.yaml`, and the onboarding configuration lives in `.postman-template/onboarding.yml`.
 
+The demo flow is intentionally small: choose a Jira project template, provision a project, then check that project by ID.
+
+Endpoints:
+
+- `GET /v1/health`
+- `GET /v1/project-templates`
+- `POST /v1/projects`
+- `GET /v1/projects/{projectId}`
+
 ## 1. Configure GitHub
 
 Add this repository secret:
@@ -59,7 +68,7 @@ When you open a PR, GitHub runs:
 - **Postman PR Validation** for OpenAPI breaking-change detection, Postman governance linting, and a sticky PR comment.
 - **Postman CI** for local service startup, generated Contract execution, optional Smoke execution, and JUnit/log upload.
 
-If you want to demonstrate a breaking change, remove or rename a response field from `api/openapi.yaml` and open a PR against `main`.
+If you want to demonstrate a breaking change, remove or rename a project response field like `status`, `ownerEmail`, or `projectUrl` from `api/openapi.yaml` and open a PR against `main`.
 
 ## Local Service Checks
 

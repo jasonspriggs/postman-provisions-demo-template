@@ -2,105 +2,47 @@
 
 const { randomUUID } = require('node:crypto');
 
-const SERVICE_NAME = 'adaptavist-access-provisioning-api';
+const SERVICE_NAME = 'adaptavist-project-provisioning-api';
 const VERSION = '1.0.0';
 
-const accessPackages = [
+const projectTemplates = [
   {
-    id: 'pkg-jira-software-standard',
-    name: 'Jira Software Standard',
-    product: 'Jira Software',
-    category: 'atlassian',
-    ownerTeam: 'platform-operations',
-    approvalRequired: true,
-    defaultDurationDays: 90,
-    estimatedFulfillmentMinutes: 45
+    id: 'template-scrum',
+    name: 'Scrum Software Project',
+    description: 'Backlog, sprints, boards, and release tracking.',
+    defaultIssueType: 'Story'
   },
   {
-    id: 'pkg-confluence-knowledge-base',
-    name: 'Confluence Knowledge Base',
-    product: 'Confluence',
-    category: 'atlassian',
-    ownerTeam: 'knowledge-systems',
-    approvalRequired: false,
-    defaultDurationDays: 180,
-    estimatedFulfillmentMinutes: 20
+    id: 'template-kanban',
+    name: 'Kanban Software Project',
+    description: 'Continuous-flow board for operational and platform work.',
+    defaultIssueType: 'Task'
   },
   {
-    id: 'pkg-github-engineering',
-    name: 'GitHub Engineering Contributor',
-    product: 'GitHub Enterprise',
-    category: 'engineering',
-    ownerTeam: 'developer-experience',
-    approvalRequired: true,
-    defaultDurationDays: 365,
-    estimatedFulfillmentMinutes: 60
+    id: 'template-service-desk',
+    name: 'Service Desk Project',
+    description: 'Request intake, queues, and service-level tracking.',
+    defaultIssueType: 'Request'
   }
 ];
 
-const requests = new Map([
+const projects = new Map([
   [
-    'apr-1001',
+    'proj-1001',
     {
-      id: 'apr-1001',
-      packageId: 'pkg-jira-software-standard',
-      requester: {
-        email: 'maya.chen@example.com',
-        displayName: 'Maya Chen',
-        department: 'Engineering'
-      },
-      target: {
-        type: 'user',
-        email: 'maya.chen@example.com'
-      },
-      environment: 'prod',
-      status: 'approved',
-      priority: 'normal',
-      businessJustification: 'Needs Jira access for the billing migration project.',
-      requestedAt: '2026-07-20T14:10:00.000Z',
-      updatedAt: '2026-07-20T15:05:00.000Z',
-      approver: {
-        email: 'sam.rivera@example.com',
-        displayName: 'Sam Rivera'
-      },
-      fulfillment: {
-        status: 'queued',
-        ticketUrl: 'https://example.atlassian.net/browse/ACCESS-1842',
-        completedAt: null
-      }
-    }
-  ],
-  [
-    'apr-1002',
-    {
-      id: 'apr-1002',
-      packageId: 'pkg-confluence-knowledge-base',
-      requester: {
-        email: 'jordan.lee@example.com',
-        displayName: 'Jordan Lee',
-        department: 'Customer Success'
-      },
-      target: {
-        type: 'user',
-        email: 'jordan.lee@example.com'
-      },
-      environment: 'prod',
-      status: 'fulfilled',
-      priority: 'low',
-      businessJustification: 'Needs access to publish onboarding runbooks.',
-      requestedAt: '2026-07-19T11:15:00.000Z',
-      updatedAt: '2026-07-19T11:35:00.000Z',
-      approver: null,
-      fulfillment: {
-        status: 'completed',
-        ticketUrl: 'https://example.atlassian.net/browse/ACCESS-1831',
-        completedAt: '2026-07-19T11:35:00.000Z'
-      }
+      id: 'proj-1001',
+      key: 'PAYMOD',
+      name: 'Payments Modernization',
+      templateId: 'template-scrum',
+      ownerEmail: 'maya.chen@example.com',
+      status: 'ready',
+      createdAt: '2026-07-20T14:20:00.000Z',
+      projectUrl: 'https://example.atlassian.net/jira/software/projects/PAYMOD'
     }
   ]
 ]);
 
-let nextRequestNumber = 2000;
+let nextProjectNumber = 2000;
 
 function createHandler() {
   return async function handler(req, res) {
@@ -113,11 +55,9 @@ function createHandler() {
       }
 
       if (route.name === 'health') return health(res);
-      if (route.name === 'listPackages') return listPackages(res);
-      if (route.name === 'listRequests') return listRequests(req, res, url);
-      if (route.name === 'createRequest') return createRequest(req, res);
-      if (route.name === 'getRequest') return getRequest(res, route.params.requestId);
-      if (route.name === 'decideRequest') return decideRequest(req, res, route.params.requestId);
+      if (route.name === 'listTemplates') return listTemplates(res);
+      if (route.name === 'createProject') return createProject(req, res);
+      if (route.name === 'getProject') return getProject(res, route.params.projectId);
 
       return sendJson(res, 404, problem('not_found', `${req.method} ${url.pathname} is not implemented.`));
     } catch (error) {
@@ -128,18 +68,12 @@ function createHandler() {
 
 function routeRequest(method, pathname) {
   if (method === 'GET' && pathname === '/v1/health') return { name: 'health', params: {} };
-  if (method === 'GET' && pathname === '/v1/access-packages') return { name: 'listPackages', params: {} };
-  if (method === 'GET' && pathname === '/v1/access-requests') return { name: 'listRequests', params: {} };
-  if (method === 'POST' && pathname === '/v1/access-requests') return { name: 'createRequest', params: {} };
+  if (method === 'GET' && pathname === '/v1/project-templates') return { name: 'listTemplates', params: {} };
+  if (method === 'POST' && pathname === '/v1/projects') return { name: 'createProject', params: {} };
 
-  const requestMatch = pathname.match(/^\/v1\/access-requests\/([^/]+)$/);
-  if (requestMatch && method === 'GET') {
-    return { name: 'getRequest', params: { requestId: decodeURIComponent(requestMatch[1]) } };
-  }
-
-  const decisionMatch = pathname.match(/^\/v1\/access-requests\/([^/]+)\/decision$/);
-  if (decisionMatch && method === 'POST') {
-    return { name: 'decideRequest', params: { requestId: decodeURIComponent(decisionMatch[1]) } };
+  const projectMatch = pathname.match(/^\/v1\/projects\/([^/]+)$/);
+  if (projectMatch && method === 'GET') {
+    return { name: 'getProject', params: { projectId: decodeURIComponent(projectMatch[1]) } };
   }
 
   return null;
@@ -154,136 +88,69 @@ function health(res) {
   });
 }
 
-function listPackages(res) {
+function listTemplates(res) {
   return sendJson(res, 200, {
-    items: accessPackages,
-    count: accessPackages.length
+    items: projectTemplates,
+    count: projectTemplates.length
   });
 }
 
-function listRequests(_req, res, url) {
-  const status = url.searchParams.get('status');
-  const packageId = url.searchParams.get('packageId');
-  const requesterEmail = url.searchParams.get('requesterEmail');
-  const limit = Math.min(Number(url.searchParams.get('limit') || '50') || 50, 100);
-
-  let items = [...requests.values()];
-  if (status) items = items.filter((item) => item.status === status);
-  if (packageId) items = items.filter((item) => item.packageId === packageId);
-  if (requesterEmail) items = items.filter((item) => item.requester.email === requesterEmail);
-
-  items = items.slice(0, limit);
-  return sendJson(res, 200, {
-    items,
-    count: items.length,
-    links: {
-      self: `/v1/access-requests${url.search}`
-    }
-  });
-}
-
-async function createRequest(req, res) {
+async function createProject(req, res) {
   const body = await readJsonBody(req);
-  const validation = validateCreateRequest(body);
+  const validation = validateCreateProject(body);
   if (validation) return sendJson(res, 400, validation);
 
-  const selectedPackage = accessPackages.find((item) => item.id === body.packageId);
-  if (!selectedPackage) {
-    return sendJson(res, 422, problem('unknown_package', `Access package ${body.packageId} does not exist.`));
+  const template = projectTemplates.find((item) => item.id === body.templateId);
+  if (!template) {
+    return sendJson(res, 422, problem('unknown_template', `Project template ${body.templateId} does not exist.`));
   }
 
-  const now = new Date().toISOString();
-  const request = {
-    id: `apr-${nextRequestNumber++}`,
-    packageId: body.packageId,
-    requester: {
-      email: body.requesterEmail,
-      displayName: body.requesterName,
-      department: body.department
-    },
-    target: {
-      type: body.targetType || 'user',
-      email: body.targetEmail
-    },
-    environment: body.environment,
-    status: selectedPackage.approvalRequired ? 'pending_approval' : 'approved',
-    priority: body.priority || 'normal',
-    businessJustification: body.businessJustification,
-    requestedAt: now,
-    updatedAt: now,
-    approver: null,
-    fulfillment: {
-      status: 'not_started',
-      ticketUrl: null,
-      completedAt: null
-    }
+  const id = `proj-${nextProjectNumber++}`;
+  const project = {
+    id,
+    key: body.key,
+    name: body.name,
+    templateId: body.templateId,
+    ownerEmail: body.ownerEmail,
+    status: 'provisioning',
+    createdAt: new Date().toISOString(),
+    projectUrl: `https://example.atlassian.net/jira/software/projects/${body.key}`
   };
 
-  requests.set(request.id, request);
-  return sendJson(res, 201, request, { Location: `/v1/access-requests/${request.id}` });
+  projects.set(id, project);
+  return sendJson(res, 201, project, { Location: `/v1/projects/${id}` });
 }
 
-function getRequest(res, requestId) {
-  const request = requests.get(requestId);
-  if (!request) return sendJson(res, 404, problem('request_not_found', `Access request ${requestId} was not found.`));
-  return sendJson(res, 200, request);
+function getProject(res, projectId) {
+  const project = projects.get(projectId);
+  if (!project) return sendJson(res, 404, problem('project_not_found', `Project ${projectId} was not found.`));
+  return sendJson(res, 200, project);
 }
 
-async function decideRequest(req, res, requestId) {
-  const request = requests.get(requestId);
-  if (!request) return sendJson(res, 404, problem('request_not_found', `Access request ${requestId} was not found.`));
-
-  const body = await readJsonBody(req);
-  if (!body || !['approved', 'rejected'].includes(body.decision) || !isEmail(body.approverEmail)) {
-    return sendJson(res, 400, problem('invalid_decision', 'decision and approverEmail are required.'));
-  }
-
-  const now = new Date().toISOString();
-  request.status = body.decision;
-  request.updatedAt = now;
-  request.approver = {
-    email: body.approverEmail,
-    displayName: body.approverName || body.approverEmail
-  };
-  request.fulfillment.status = body.decision === 'approved' ? 'queued' : 'not_started';
-  if (body.decision === 'approved' && !request.fulfillment.ticketUrl) {
-    request.fulfillment.ticketUrl = `https://example.atlassian.net/browse/ACCESS-${randomUUID().slice(0, 8).toUpperCase()}`;
-  }
-
-  return sendJson(res, 200, request);
-}
-
-function validateCreateRequest(body) {
+function validateCreateProject(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     return problem('invalid_json', 'Request body must be a JSON object.');
   }
 
-  const required = [
-    'packageId',
-    'requesterEmail',
-    'requesterName',
-    'department',
-    'targetEmail',
-    'environment',
-    'businessJustification'
-  ];
+  const required = ['name', 'key', 'templateId', 'ownerEmail'];
   for (const field of required) {
     if (typeof body[field] !== 'string' || body[field].trim() === '') {
       return problem('missing_field', `${field} is required.`);
     }
   }
-  if (!isEmail(body.requesterEmail) || !isEmail(body.targetEmail)) {
-    return problem('invalid_email', 'requesterEmail and targetEmail must be valid email addresses.');
+
+  if (!/^[A-Z][A-Z0-9]{1,9}$/.test(body.key)) {
+    return problem('invalid_project_key', 'key must be 2 to 10 uppercase letters or numbers.');
   }
-  if (!['prod', 'sandbox'].includes(body.environment)) {
-    return problem('invalid_environment', 'environment must be prod or sandbox.');
+
+  if (body.name.trim().length < 3) {
+    return problem('invalid_project_name', 'name must be at least 3 characters.');
   }
-  if (body.priority && !['low', 'normal', 'urgent'].includes(body.priority)) {
-    return problem('invalid_priority', 'priority must be low, normal, or urgent.');
+
+  if (!isEmail(body.ownerEmail)) {
+    return problem('invalid_owner_email', 'ownerEmail must be a valid email address.');
   }
-  if (body.targetType && !['user', 'group'].includes(body.targetType)) {
-    return problem('invalid_target_type', 'targetType must be user or group.');
-  }
+
   return null;
 }
 
@@ -324,7 +191,7 @@ function sendJson(res, statusCode, body, headers = {}) {
 module.exports = {
   SERVICE_NAME,
   VERSION,
-  accessPackages,
   createHandler,
-  requests
+  projectTemplates,
+  projects
 };

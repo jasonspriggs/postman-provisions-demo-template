@@ -9,7 +9,7 @@ const host = process.env.HOST || '127.0.0.1';
 const server = http.createServer(createHandler());
 
 server.listen(port, host, () => {
-  console.log(`Access provisioning demo API listening on http://${host}:${port}`);
+  console.log(`Project provisioning demo API listening on http://${host}:${port}`);
 });
 
 process.on('SIGTERM', () => {

@@ -2,7 +2,7 @@
   "name": "adaptavist-provisions-demo-template",
   "version": "0.1.0",
   "private": true,
-  "description": "Hands-on Postman API onboarding template for a realistic access provisioning service.",
+  "description": "Hands-on Postman API onboarding template for a simple Jira project provisioning service.",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",

@@ -9,8 +9,8 @@ postman:
   orgMode: true
 
 service:
-  name: adaptavist-access-provisioning-api
-  displayName: Adaptavist Access Provisioning API
+  name: adaptavist-project-provisioning-api
+  displayName: Adaptavist Project Provisioning API
   domain: partner-enablement
   domainCode: ADPT
   governanceGroup: Adaptavist Provisions Demo
