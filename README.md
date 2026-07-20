@@ -1,22 +1,69 @@
 # Adaptavist Provisions Demo Template
 
-This repository is a hands-on Postman API onboarding workshop template for Adaptavist. It intentionally starts from a repo-owned OpenAPI contract instead of AWS spec discovery, then uses the Postman composite onboarding action to create and sync the Postman workspace, generated collections, repository artifacts, and CI checks.
+Use this repository to run the Postman API onboarding workflow hands-on.
 
-The demo API is a small access provisioning service. It models requestable access packages, access requests, approval decisions, and fulfillment status, which gives the generated contract tests enough schema detail to be meaningful.
+The service code lives in `src/`, the OpenAPI source of truth lives in `api/openapi.yaml`, and the onboarding configuration lives in `.postman-template/onboarding.yml`.
 
-## What The Workshop Shows
+## 1. Configure GitHub
 
-- A realistic local API implementation in `src/`.
-- A fleshed-out OpenAPI source of truth in `api/openapi.yaml`.
-- Postman composite onboarding through `postman-cs/postman-api-onboarding-action@v2`.
-- Local service startup in CI before generated Contract tests run.
-- Optional Smoke collection execution.
-- JUnit and log artifact upload for test diagnostics.
-- PR validation with OpenAPI breaking-change detection, Postman governance linting, and a sticky PR comment.
+Add this repository secret:
 
-## Local Commands
+- `POSTMAN_API_KEY`: Postman service account API key.
 
-Run the unit tests:
+Add these repository variables if needed:
+
+- `POSTMAN_REGION`: `us` or `eu`. Defaults to `us`.
+- `POSTMAN_ORG_MODE`: `true` or `false`. Defaults to `true`.
+- `POSTMAN_WORKSPACE_TEAM_ID`: optional sub-team ID for workspace creation. Leave blank to use the team ID resolved from `POSTMAN_API_KEY`.
+- `POSTMAN_SYSTEM_ENV_MAP_JSON`: optional Catalog system-environment mapping, for example `{"prod":"<system-env-uuid>"}`.
+- `POSTMAN_RUN_SMOKE`: set to `true` only when you want PR CI to run Smoke by default.
+
+## 2. Run The Onboarding Workflow
+
+In GitHub, open **Actions** and run **Postman Onboarding** manually.
+
+Use these inputs for the first workshop run:
+
+- `repo_write_mode`: `commit-and-push`
+- `collection_sync_mode`: `refresh`
+- `run_smoke`: `false`
+- `requester_email`: leave blank unless you want to override `.postman-template/onboarding.yml`
+
+The workflow will:
+
+- Run the local service unit tests.
+- Upload `api/openapi.yaml` to Postman.
+- Generate the baseline, Contract, and Smoke collections.
+- Sync generated `.postman/` and `postman/` artifacts back to `main`.
+- Start the local API in CI.
+- Run the generated Contract collection with JUnit output.
+- Upload Postman CLI logs and JUnit diagnostics.
+
+Smoke is disabled by default so the workshop focuses on onboarding and contract validation first.
+
+## 3. Confirm Generated Artifacts
+
+After the workflow finishes, confirm that `main` contains generated Postman files:
+
+- `.postman/resources.yaml`
+- Generated collection exports under `postman/`
+
+Generated commits are amended with `[skip actions]`, and the onboarding workflow ignores `.postman/**` and `postman/**` pushes, so syncing artifacts to `main` will not create an Actions loop.
+
+## 4. Test The PR Flow
+
+Create a branch and change `api/openapi.yaml` or the service implementation.
+
+When you open a PR, GitHub runs:
+
+- **Postman PR Validation** for OpenAPI breaking-change detection, Postman governance linting, and a sticky PR comment.
+- **Postman CI** for local service startup, generated Contract execution, optional Smoke execution, and JUnit/log upload.
+
+If you want to demonstrate a breaking change, remove or rename a response field from `api/openapi.yaml` and open a PR against `main`.
+
+## Local Service Checks
+
+Run unit tests:
 
 ```sh
 npm test
@@ -29,27 +76,3 @@ npm start
 ```
 
 The API listens at `http://127.0.0.1:4010`.
-
-## GitHub Configuration
-
-Required secret:
-
-- `POSTMAN_API_KEY`: Postman service account API key.
-
-Useful repository variables:
-
-- `POSTMAN_REGION`: `us` or `eu`. Defaults to `us`.
-- `POSTMAN_ORG_MODE`: `true` or `false`. Defaults to `true` for this workshop.
-- `POSTMAN_WORKSPACE_TEAM_ID`: optional sub-team override for workspace creation. When omitted, the onboarding workflow uses the team ID resolved from `POSTMAN_API_KEY`.
-- `POSTMAN_SYSTEM_ENV_MAP_JSON`: optional system environment mapping such as `{"prod":"<system-env-uuid>"}`.
-- `POSTMAN_RUN_SMOKE`: set to `true` to run Smoke by default in the PR CI workflow.
-
-## Recommended Flow
-
-1. Configure `POSTMAN_API_KEY` and any needed variables.
-2. Run `Postman Onboarding` manually.
-3. Use `repo_write_mode=commit-and-push` when you want the generated `.postman/` and `postman/` artifacts written back to `main`.
-4. Open a PR that changes `api/openapi.yaml` or the service implementation.
-5. Review the PR validation comment and the Postman CI JUnit/log artifacts.
-
-The onboarding workflow ignores generated Postman artifact-only pushes and amends generated commits with `[skip actions]`, so writing artifacts to `main` does not start a recursive workflow loop.
