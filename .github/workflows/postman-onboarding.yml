@@ -249,7 +249,7 @@ jobs:
 
       - id: onboard
         name: Run Postman composite onboarding
-        uses: postman-cs/postman-api-onboarding-action@v2
+        uses: postman-cs/postman-api-onboarding-action@codex/use-bootstrap-readback-retry
         with:
           project-name: ${{ steps.config.outputs.project_name }}
           domain: ${{ steps.config.outputs.domain }}
