@@ -9,7 +9,7 @@ postman:
   orgMode: true
 
 service:
-  name: adaptavist-project-provisioning-api
+  name: adaptavist-project-provisioning-api-jspriggs
   displayName: Adaptavist Project Provisioning API
   domain: partner-enablement
   domainCode: ADPT
