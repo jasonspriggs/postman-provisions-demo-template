@@ -90,7 +90,7 @@ paths:
             Location:
               description: Relative URL of the provisioned project.
               schema:
-                type: string
+                type: int
               example: /v1/projects/proj-2000
           content:
             application/json:
