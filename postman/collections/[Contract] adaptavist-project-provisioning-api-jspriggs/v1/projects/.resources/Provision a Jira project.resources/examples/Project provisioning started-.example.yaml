@@ -1,0 +1,42 @@
+$kind: http-example
+id: 528a01b0-f6f6-4a02-8805-c08e81055d5b
+name: Project provisioning started.
+request:
+  url: "{{baseUrl}}/v1/projects"
+  method: POST
+  headers:
+    Content-Type: application/json
+    Accept: application/json
+  body:
+    type: json
+    content: |-
+      {
+        "name": "Partner Portal",
+        "key": "PORTAL",
+        "templateId": "template-kanban",
+        "ownerEmail": "alex.morgan@example.com"
+      }
+response:
+  statusCode: 201
+  statusText: Created
+  headers:
+    - key: Content-Type
+      value: application/json
+    - key: Location
+      value: /v1/projects/proj-2000
+      disabled: false
+      description: Relative URL of the provisioned project.
+  body:
+    type: json
+    content: |-
+      {
+        "id": "proj-2000",
+        "key": "PORTAL",
+        "name": "Partner Portal",
+        "templateId": "template-kanban",
+        "ownerEmail": "alex.morgan@example.com",
+        "status": "provisioning",
+        "createdAt": "2026-07-20T16:00:00.000Z",
+        "projectUrl": "https://example.atlassian.net/jira/software/projects/PORTAL"
+      }
+order: 1000

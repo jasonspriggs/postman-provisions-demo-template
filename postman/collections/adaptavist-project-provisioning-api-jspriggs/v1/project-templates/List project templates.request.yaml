@@ -1,0 +1,9 @@
+$kind: http-request
+id: 1e0852c5-9d64-4d2a-959c-9d04a1fe0ec1
+url: "{{baseUrl}}/v1/project-templates"
+method: GET
+headers:
+  Accept: application/json
+settings: {}
+examples: ./.resources/List project templates.resources/examples
+order: 1000

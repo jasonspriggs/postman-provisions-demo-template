@@ -1,0 +1,19 @@
+$kind: http-request
+id: 7c5e33d6-e695-497d-87db-816c2aecb352
+url: "{{baseUrl}}/v1/projects"
+method: POST
+headers:
+  Content-Type: application/json
+  Accept: application/json
+body:
+  type: json
+  content: |-
+    {
+      "name": "Partner Portal",
+      "key": "PORTAL",
+      "templateId": "template-kanban",
+      "ownerEmail": "alex.morgan@example.com"
+    }
+settings: {}
+examples: ./.resources/Provision a Jira project.resources/examples
+order: 2000

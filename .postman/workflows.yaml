@@ -1,0 +1,8 @@
+workflows:
+  syncSpecToCollection:
+    - spec: ../api/openapi.yaml
+      collection: ../postman/collections/adaptavist-project-provisioning-api-jspriggs
+    - spec: ../api/openapi.yaml
+      collection: ../postman/collections/[Smoke] adaptavist-project-provisioning-api-jspriggs
+    - spec: ../api/openapi.yaml
+      collection: ../postman/collections/[Contract] adaptavist-project-provisioning-api-jspriggs

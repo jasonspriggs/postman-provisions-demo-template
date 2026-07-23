@@ -1,0 +1,32 @@
+$kind: http-example
+id: 71ce7203-8935-45da-a443-cb5635ed3f4b
+name: Request body failed validation.
+request:
+  url: "{{baseUrl}}/v1/projects"
+  method: POST
+  headers:
+    Content-Type: application/json
+    Accept: application/json
+  body:
+    type: json
+    content: |-
+      {
+        "name": "Partner Portal",
+        "key": "PORTAL",
+        "templateId": "template-kanban",
+        "ownerEmail": "alex.morgan@example.com"
+      }
+response:
+  statusCode: 400
+  statusText: Bad Request
+  headers:
+    Content-Type: application/json
+  body:
+    type: json
+    content: |-
+      {
+        "code": "project_not_found",
+        "message": "Project proj-404 was not found.",
+        "traceId": "trc-8f7340b5af23"
+      }
+order: 2000

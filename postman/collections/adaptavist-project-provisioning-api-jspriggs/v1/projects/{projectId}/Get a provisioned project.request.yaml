@@ -1,0 +1,13 @@
+$kind: http-request
+id: 967c600b-616c-45cf-bfce-ea9867a01aab
+url: "{{baseUrl}}/v1/projects/:projectId"
+method: GET
+headers:
+  Accept: application/json
+pathVariables:
+  - key: projectId
+    value: proj-1001
+    description: Project identifier.
+settings: {}
+examples: ./.resources/Get a provisioned project.resources/examples
+order: 1000

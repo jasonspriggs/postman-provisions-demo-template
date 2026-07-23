@@ -1,0 +1,32 @@
+$kind: http-example
+id: 85080a59-733b-4210-965f-3f8af7eeb80e
+name: Request references an unknown template.
+request:
+  url: "{{baseUrl}}/v1/projects"
+  method: POST
+  headers:
+    Content-Type: application/json
+    Accept: application/json
+  body:
+    type: json
+    content: |-
+      {
+        "name": "Partner Portal",
+        "key": "PORTAL",
+        "templateId": "template-kanban",
+        "ownerEmail": "alex.morgan@example.com"
+      }
+response:
+  statusCode: 422
+  statusText: Unprocessable Entity (WebDAV) (RFC 4918)
+  headers:
+    Content-Type: application/json
+  body:
+    type: json
+    content: |-
+      {
+        "code": "project_not_found",
+        "message": "Project proj-404 was not found.",
+        "traceId": "trc-8f7340b5af23"
+      }
+order: 3000

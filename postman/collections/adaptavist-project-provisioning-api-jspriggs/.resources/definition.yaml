@@ -1,0 +1,5 @@
+$kind: collection
+id: dac6d672-f599-4bff-9b7c-5a10fe8a2075
+description: API for selecting a Jira project template, provisioning a project, and checking the project status.
+variables:
+  baseUrl: http://127.0.0.1:4010

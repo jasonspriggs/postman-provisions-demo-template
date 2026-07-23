@@ -1,0 +1,40 @@
+$kind: http-example
+id: 782c6d51-d296-40b7-a407-b89378311f5b
+name: Project templates available for new Jira projects.
+request:
+  url: "{{baseUrl}}/v1/project-templates"
+  method: GET
+  headers:
+    Accept: application/json
+response:
+  statusCode: 200
+  statusText: OK
+  headers:
+    Content-Type: application/json
+  body:
+    type: json
+    content: |-
+      {
+        "items": [
+          {
+            "id": "template-scrum",
+            "name": "Scrum Software Project",
+            "description": "Backlog, sprints, boards, and release tracking.",
+            "defaultIssueType": "Story"
+          },
+          {
+            "id": "template-kanban",
+            "name": "Kanban Software Project",
+            "description": "Continuous-flow board for operational and platform work.",
+            "defaultIssueType": "Task"
+          },
+          {
+            "id": "template-service-desk",
+            "name": "Service Desk Project",
+            "description": "Request intake, queues, and service-level tracking.",
+            "defaultIssueType": "Request"
+          }
+        ],
+        "count": 3
+      }
+order: 1000

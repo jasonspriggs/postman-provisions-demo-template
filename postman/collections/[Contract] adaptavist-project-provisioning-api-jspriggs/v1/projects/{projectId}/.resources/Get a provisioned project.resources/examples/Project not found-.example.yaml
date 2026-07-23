@@ -1,0 +1,26 @@
+$kind: http-example
+id: 690e4b26-777e-439a-a397-aef2d32e4b33
+name: Project not found.
+request:
+  url: "{{baseUrl}}/v1/projects/:projectId"
+  method: GET
+  headers:
+    Accept: application/json
+  pathVariables:
+    - key: projectId
+      value: proj-1001
+      description: Project identifier.
+response:
+  statusCode: 404
+  statusText: Not Found
+  headers:
+    Content-Type: application/json
+  body:
+    type: json
+    content: |-
+      {
+        "code": "project_not_found",
+        "message": "Project proj-404 was not found.",
+        "traceId": "trc-8f7340b5af23"
+      }
+order: 2000

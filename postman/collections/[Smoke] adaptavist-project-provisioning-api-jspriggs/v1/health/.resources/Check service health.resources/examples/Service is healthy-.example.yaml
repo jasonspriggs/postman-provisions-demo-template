@@ -1,0 +1,23 @@
+$kind: http-example
+id: d385cd32-d867-4502-ac65-d4c308157ad5
+name: Service is healthy.
+request:
+  url: "{{baseUrl}}/v1/health"
+  method: GET
+  headers:
+    Accept: application/json
+response:
+  statusCode: 200
+  statusText: OK
+  headers:
+    Content-Type: application/json
+  body:
+    type: json
+    content: |-
+      {
+        "status": "ok",
+        "service": "adaptavist-project-provisioning-api",
+        "version": "1.0.0",
+        "timestamp": "2026-07-20T14:20:00.000Z"
+      }
+order: 1000

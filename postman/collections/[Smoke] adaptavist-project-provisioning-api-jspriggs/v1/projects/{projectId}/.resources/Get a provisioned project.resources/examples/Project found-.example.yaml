@@ -1,0 +1,31 @@
+$kind: http-example
+id: 2485d98e-b816-4140-aad9-f2f3bf9cbadb
+name: Project found.
+request:
+  url: "{{baseUrl}}/v1/projects/:projectId"
+  method: GET
+  headers:
+    Accept: application/json
+  pathVariables:
+    - key: projectId
+      value: proj-1001
+      description: Project identifier.
+response:
+  statusCode: 200
+  statusText: OK
+  headers:
+    Content-Type: application/json
+  body:
+    type: json
+    content: |-
+      {
+        "id": "proj-1001",
+        "key": "PAYMOD",
+        "name": "Payments Modernization",
+        "templateId": "template-scrum",
+        "ownerEmail": "maya.chen@example.com",
+        "status": "ready",
+        "createdAt": "2026-07-20T14:20:00.000Z",
+        "projectUrl": "https://example.atlassian.net/jira/software/projects/PAYMOD"
+      }
+order: 1000

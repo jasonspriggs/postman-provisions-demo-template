@@ -1,0 +1,12 @@
+version: 2
+workspace:
+  id: 8dc9f8ae-3504-445c-a671-cf151df0b7b0
+canonical:
+  collections:
+    ../postman/collections/adaptavist-project-provisioning-api-jspriggs: 56856819-dac6d672-f599-4bff-9b7c-5a10fe8a2075
+    ../postman/collections/[Smoke] adaptavist-project-provisioning-api-jspriggs: 56856819-5d19c2ba-351d-4e69-8dc0-f11c5f00279b
+    ../postman/collections/[Contract] adaptavist-project-provisioning-api-jspriggs: 56856819-46f5d136-1f89-49ff-a5aa-f357da7c9c4c
+  environments:
+    ../postman/environments/local.postman_environment.json: 56856819-4901f5fb-7ea1-481a-acad-408388f5bdae
+  specs:
+    ../api/openapi.yaml: 4d903ed4-5c11-4324-84fb-066f9cc5e8ef
